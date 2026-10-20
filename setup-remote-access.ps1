@@ -1,10 +1,12 @@
 #Requires -RunAsAdministrator
 <#
   PostalAnnex Gig Harbor — remote access for the master PC (pa-master-19004)
-  Rebel Viking, 2026-10-19. Run ONCE, in PowerShell opened as Administrator.
+  Rebel Viking, 2026-10-19. Run ONCE, in PowerShell opened as Administrator:
+
+    powershell -ExecutionPolicy Bypass -File setup-remote-access.ps1 -AuthKey tskey-auth-...
 
   What it does, in order:
-    1. Asks for the one-time key from the link Craig sent (pasted, never saved anywhere).
+    1. Takes the one-time key (on the command line; if it is missing, asks for it).
     2. Installs Tailscale and joins the Rebel Viking network as this one device.
     3. Installs the Windows OpenSSH Server.
     4. Allows exactly ONE key to log in (the Rebel Viking jump server's). Passwords off.
@@ -12,8 +14,12 @@
 
   What it does NOT do: it advertises no routes and no exit node, so this PC cannot reach
   anything at Rebel Viking — Rebel Viking can reach this PC on port 22, and nothing else.
-  No password is stored. PostalMate, printers and the shop network are untouched.
+  The key is single-use and is not written anywhere. PostalMate, printers and the shop
+  network are untouched.
 #>
+param(
+  [string]$AuthKey = ""
+)
 $ErrorActionPreference = "Stop"
 $Hostname = "pa-master-19004"
 $JumpKey  = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICPnk8he2kOWmCXTvF53ZjNwWr7AbjfHbUZVT9TIXUZQ rv-jump-pa -> pa-master-19004"
@@ -22,12 +28,13 @@ function Step($t) { Write-Host "`n== $t" -ForegroundColor Cyan }
 
 # ---- 1. the key -----------------------------------------------------------------
 Step "The key"
-$secure  = Read-Host "Paste the key from Craig's link, then press Enter" -AsSecureString
-$AuthKey = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))
-if (-not $AuthKey -or -not $AuthKey.Trim().StartsWith("tskey-auth-")) {
-  throw "That does not look like the key (it starts with tskey-auth-). Open the link again and copy the whole line."
+if (-not $AuthKey) { $AuthKey = Read-Host "Paste the key (it starts with tskey-auth-), then press Enter" }
+# Tidy what a copy from an email tends to bring along: spaces, quotes, a trailing period.
+$AuthKey = ($AuthKey -replace '[\s"'']', '').TrimEnd('.')
+if (-not $AuthKey.StartsWith("tskey-auth-") -or $AuthKey.Length -lt 30) {
+  throw "That does not look like the key (it starts with tskey-auth- and is about 60 characters). Copy the whole key and run the line again."
 }
-$AuthKey = $AuthKey.Trim()
+Write-Host "Key received ($($AuthKey.Length) characters)."
 
 # ---- 2. Tailscale ---------------------------------------------------------------
 Step "Tailscale"
@@ -40,10 +47,10 @@ if (-not (Test-Path $ts)) {
   Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
   Start-Sleep -Seconds 8
 }
-if (-not (Test-Path $ts)) { throw "Tailscale did not install. Install it from tailscale.com/download, then run this file again." }
+if (-not (Test-Path $ts)) { throw "Tailscale did not install. Install it from tailscale.com/download, then run the line again." }
 & $ts up --auth-key=$AuthKey --hostname=$Hostname --unattended --accept-routes=false --accept-dns=false --advertise-exit-node=false --reset
+if ($LASTEXITCODE -ne 0) { throw "Tailscale did not accept the key. Tell Craig: tailscale up exit $LASTEXITCODE." }
 $AuthKey = $null
-$secure  = $null
 Start-Sleep -Seconds 3
 $ip = (& $ts ip -4 | Select-Object -First 1).Trim()
 Write-Host "Tailscale is on. This PC is $Hostname at $ip"
@@ -87,4 +94,4 @@ Start-Service sshd
 Step "Done"
 Write-Host ""
 Write-Host "Computer: $env:COMPUTERNAME   Windows user: $env:USERNAME   Tailscale IP: $ip" -ForegroundColor Green
-Write-Host "Read the Windows user name above to Craig. That is all."
+Write-Host "Read the Windows user name and the Tailscale IP to Craig. That is all."
