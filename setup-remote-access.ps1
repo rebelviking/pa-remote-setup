@@ -1,7 +1,7 @@
 #Requires -RunAsAdministrator
 <#
   PostalAnnex Gig Harbor — remote access for the master PC (pa-master-19004)
-  Rebel Viking, 2026-10-19. Run ONCE, in PowerShell opened as Administrator:
+  Rebel Viking, 2026-10-19 (v3: safe to run again). In PowerShell opened as Administrator:
 
     powershell -ExecutionPolicy Bypass -File setup-remote-access.ps1 -AuthKey tskey-auth-...
 
@@ -48,8 +48,15 @@ if (-not (Test-Path $ts)) {
   Start-Sleep -Seconds 8
 }
 if (-not (Test-Path $ts)) { throw "Tailscale did not install. Install it from tailscale.com/download, then run the line again." }
-& $ts up --auth-key=$AuthKey --hostname=$Hostname --unattended --accept-routes=false --accept-dns=false --advertise-exit-node=false --reset
-if ($LASTEXITCODE -ne 0) { throw "Tailscale did not accept the key. Tell Craig: tailscale up exit $LASTEXITCODE." }
+# Already joined (this line was run twice)? Leave Tailscale alone — a used key would log it out.
+$already = $false
+try { $already = ((& $ts status --json | ConvertFrom-Json).BackendState -eq "Running") } catch { $already = $false }
+if ($already) {
+  Write-Host "Tailscale is already connected on this PC. Leaving it as it is."
+} else {
+  & $ts up --auth-key=$AuthKey --hostname=$Hostname --unattended --accept-routes=false --accept-dns=false --advertise-exit-node=false --reset
+  if ($LASTEXITCODE -ne 0) { throw "Tailscale did not accept the key (a key works once; ask Craig for a fresh one). tailscale up exit $LASTEXITCODE." }
+}
 $AuthKey = $null
 Start-Sleep -Seconds 3
 $ip = (& $ts ip -4 | Select-Object -First 1).Trim()
